@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     tar -xf velero-${VERSION}-linux-${ARCH}.tar.gz && \
     mv velero-${VERSION}-linux-${ARCH}/velero /usr/local/bin/velero && \
     chmod +  /usr/local/bin/velero && \
-    rm -rf velero-*
+    rm -rf velero-${VERSION}-*
 RUN chown -R nobody:nogroup /app
 USER nobody
 ENTRYPOINT ["python", "velero-watchdog.py"]

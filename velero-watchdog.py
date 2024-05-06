@@ -58,6 +58,11 @@ def get_failed_backup_schedules(backups_specs, window_hours) -> dict:
     for backup in backups_specs:
         status = backup.get("status", {})
         phase = status.get("phase")
+        start_timestamp_str = status.get("startTimestamp")
+
+        if start_timestamp_str is None:
+            continue
+
         start_timestamp = datetime.fromisoformat(status.get("startTimestamp")).replace(
             tzinfo=timezone.utc
         )

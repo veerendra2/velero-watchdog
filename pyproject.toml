@@ -1,0 +1,10 @@
+[tool.black]
+line-length = 88
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.pylint.messages_control]
+disable = [
+  "C0103"
+]

@@ -4,8 +4,6 @@
 A script to fetch failed Velero backups and triggers the backups manually
 """
 
-# pylint: disable=C0103
-# pylint: disable=E0401
 import argparse
 import re
 import subprocess

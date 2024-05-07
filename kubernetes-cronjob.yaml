@@ -10,24 +10,39 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: velero-watchdog
+  name: velero-watchdog-role
   namespace: velero
   labels:
     app: velero
 rules:
   - apiGroups:
-      - "*"
+      - velero.io
     resources:
       - "*"
     verbs:
-      - "list"
+      - "*"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: velero-watchdog-clusterrole
+rules:
+  - apiGroups:
+      - "velero.io"
+    resources:
+      - "*"
+    verbs:
       - "get"
+      - "list"
+      - "create"
+      - "patch"
+      - "update"
       - "watch"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: velero-watchdog
+  name: velero-watchdog-rolebinding
   namespace: velero
   labels:
     app: velero
@@ -38,6 +53,19 @@ subjects:
 roleRef:
   kind: Role
   name: velero-watchdog
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: velero-watchdog-clusterrolebinding
+subjects:
+  - kind: ServiceAccount
+    name: velero-watchdog
+    namespace: velero
+roleRef:
+  kind: ClusterRole
+  name: velero-watchdog-clusterrole
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: batch/v1
@@ -65,7 +93,7 @@ spec:
             - name: staffbase-artifactory
           containers:
             - name: velero-watchdog
-              image: veerendra2/velero-watchdog:latest
+              image: veerendra2/velero-watchdog:0.1.3
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false

@@ -32,4 +32,4 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/d2cd:${{ github.ref_name }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/velero-watchdog:${{ github.ref_name }}

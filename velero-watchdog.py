@@ -31,7 +31,7 @@ class KubernetesAPI:
         self.v1 = client.CustomObjectsApi()
 
     def get_velero_backups(self) -> list:
-        """Gets velero backup
+        """Gets velero backup K8s spec
 
         :return: list of velero backup k8s specs
         :rtype: list
@@ -43,7 +43,7 @@ class KubernetesAPI:
         )["items"]
 
     def delete_velero_backups(self, backup_name):
-        """Delete velero backups
+        """Delete velero backup K8s specs
 
         :parm backup_name: backups list to be deleted
         :type backup_name: list
@@ -116,9 +116,11 @@ def find_failed_backup_schedules(backups_specs, window_hours) -> dict:
                 if owner_ref.get("kind") == "Schedule":
                     schedule_name = owner_ref.get("name")
                     backup_name = backup["metadata"]["name"]
+                    failure_reason = status.get("failureReason", "N/A")
+
                     logger.info(
-                        f"Found failed backup '{backup_name}', belongs to '{schedule_name}' "
-                        f"schedule"
+                        f"Failed backup '{backup_name}' from '{schedule_name}' schedule. "
+                        f"Reason: {failure_reason}"
                     )
                     recent_failures.setdefault(schedule_name, []).append(backup_name)
 
@@ -141,13 +143,13 @@ def trigger_backups_from_schedules(schedules_list) -> list:
 
         new_bkp = re.findall(r"Backup request \"(.*?)\"", output)[0]
         new_backups.append(new_bkp)
-        logger.info(f"Created new backup '{new_bkp}' from '{schedule}' schedule")
+        logger.info(f"New backup '{new_bkp}' from '{schedule}' schedule created")
 
     return new_backups
 
 
-def delete_backups(backups, k8s_obj) -> None:
-    """Helper function to delete Velero backup with velero cli and K8s API
+def delete_backups(backups) -> None:
+    """Delete Velero backup with velero cli
 
     :param backups: List of backups
     :type backups: list
@@ -157,11 +159,8 @@ def delete_backups(backups, k8s_obj) -> None:
     :return: None
     """
     for backup in backups:
-        logger.info(f"Delete previously failed backup '{backup}'")
+        logger.info(f"Deleted failed backup '{backup}'")
         velero_output = execute(f"velero delete backup {backup} --confirm")
-
-        # also delete K8s spec
-        k8s_obj.delete_velero_backups(backup)
         logger.debug(velero_output.replace("\n", ""))
 
 
@@ -233,7 +232,7 @@ def main():
 
     if not args.dont_delete_backups:
         # Delete failed backups
-        delete_backups(list(chain.from_iterable(schedules.values())), k8s)
+        delete_backups(list(chain.from_iterable(schedules.values())))
 
 
 if __name__ == "__main__":

@@ -89,8 +89,6 @@ spec:
             app: velero
         spec:
           serviceAccountName: velero-watchdog
-          imagePullSecrets:
-            - name: staffbase-artifactory
           containers:
             - name: velero-watchdog
               image: veerendra2/velero-watchdog:0.1.3

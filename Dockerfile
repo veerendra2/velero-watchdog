@@ -1,7 +1,7 @@
 FROM python:3.12.3-bookworm
 
 ARG ARCH=amd64
-ARG VERSION=v1.13.2
+ARG VERSION=v1.14.0
 
 WORKDIR /app
 COPY . .

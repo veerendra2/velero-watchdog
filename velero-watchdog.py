@@ -1,167 +1,68 @@
 #!/usr/bin/env python3
 
-"""
-A script to fetch failed Velero backups and triggers the backups manually
-"""
-
 import argparse
-import re
+import json
 import subprocess
-import sys
 from datetime import datetime, timedelta, timezone
-from itertools import chain
-from typing import Dict, List
 
-from kubernetes import client, config
 from loguru import logger
 
 PHASES = ["PartiallyFailed", "Failed"]
 
 
-class KubernetesAPI:
-    """Kubernetes Client"""
+def execute(cmd):
+    """Executes shell command and returns output"""
 
-    def __init__(self):
-        logger.info("Access Kubernetes API")
-        try:
-            config.load_incluster_config()
-        except config.config_exception.ConfigException:
-            config.load_kube_config()
-
-        self.v1 = client.CustomObjectsApi()
-
-    def get_velero_backups(self) -> list:
-        """Gets velero backup K8s spec
-
-        :return: list of velero backup k8s specs
-        :rtype: list
-        """
-
-        logger.debug("Fetch velero backups K8s specs")
-        return self.v1.list_namespaced_custom_object(
-            group="velero.io", version="v1", namespace="velero", plural="backups"
-        )["items"]
-
-    def delete_velero_backups(self, backup_name):
-        """Delete velero backup K8s specs
-
-        :parm backup_name: backups list to be deleted
-        :type backup_name: list
-        """
-
-        logger.debug(f"Delete velero backup K8s spec '{backup_name}'")
-        self.v1.delete_namespaced_custom_object(
-            group="velero.io",
-            version="v1",
-            namespace="velero",
-            plural="backups",
-            name=backup_name,
+    try:
+        cmd_output = subprocess.run(
+            cmd.split(), capture_output=True, text=True, encoding="utf-8", check=True
         )
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Failed run '{cmd}' :" + str(e.stderr).replace("\n", " "))
+        return ""
+
+    return cmd_output.stdout
 
 
-def execute(cmd) -> str:
-    """Executes shell command and returns output
-
-    :parm cmd: shell command
-    :type cmd: str
-
-    :return: shell command output
-    :rtype: str
-    """
-    logger.debug(f"Executing {cmd}")
-    process = subprocess.run(
-        cmd.split(), capture_output=True, text=True, check=False, encoding="utf-8"
-    )
-    return process.stdout
-
-
-def find_failed_backup_schedules(backups_specs, window_hours) -> dict:
+def find_failed_backups(window_hours) -> tuple:
     """Identifies failed backups (with associated schedules) from a list of backup
-    specs within a given time window.
+    specs within a given time window."""
 
-    1. Filters backups whose backup phases are ["PartiallyFailed", "Failed"].
-    2. Checks whether there are any failed backups within the given time window.
-    3. Checks the "ownerReferences" of the backups with "kind" == "Schedule".
-    4. Stores the "Schedule" as the key with its associated failed backups as the value."
-
-    :param backups_spec: List of velero backups specs
-    :type backups_spec: list
-
-    :param window_hours: Time window to look failed backups
-    :type window_hours: int
-
-    :return: Dictionary of schedules with thier failed backups
-    :rtype: dict
-    """
-
-    recent_failures: Dict[str, List[str]] = {}
+    failed_backup_schedules = set()
+    failed_backups = []
     current_time_utc = datetime.now(timezone.utc)
-    for backup in backups_specs:
+
+    logger.info("Fetch velero backups")
+    backups_json = json.loads(execute("velero get backup -o json"))
+    for backup in backups_json.get("items", []):
         status = backup.get("status", {})
-        phase = status.get("phase")
+        phase = status.get("phase", "")
         start_timestamp_str = status.get("startTimestamp")
+        owner_references = backup.get("metadata", {}).get("ownerReferences", [])
 
         if start_timestamp_str is None:
             continue
 
-        start_timestamp = datetime.fromisoformat(start_timestamp_str).replace(
-            tzinfo=timezone.utc
-        )
+        delta_time = current_time_utc - datetime.fromisoformat(
+            start_timestamp_str
+        ).replace(tzinfo=timezone.utc)
 
-        if phase in PHASES and current_time_utc - start_timestamp <= timedelta(
-            hours=window_hours
-        ):
-            owner_references = backup.get("metadata", {}).get("ownerReferences", [])
-            for owner_ref in owner_references:
-                if owner_ref.get("kind") == "Schedule":
-                    schedule_name = owner_ref.get("name")
-                    backup_name = backup["metadata"]["name"]
-                    failure_reason = status.get("failureReason", "N/A")
+        if phase in PHASES and delta_time <= timedelta(hours=window_hours):
 
-                    logger.info(
-                        f"Failed backup '{backup_name}' from '{schedule_name}' schedule. "
-                        f"Reason: {failure_reason}"
-                    )
-                    recent_failures.setdefault(schedule_name, []).append(backup_name)
+            if owner_references:
+                # First check if owner reference has "Schedule" name
+                for owner_ref in owner_references:
+                    if owner_ref.get("kind") == "Schedule":
+                        failed_backup_schedules.add(owner_ref.get("name"))
+                        failed_backups.append(backup["metadata"]["name"])
+            else:
+                # Else check "schedule" name in labels
+                failed_backup_schedules.add(
+                    backup.get("metadata", {}).get("labels", {}).get("schedule", "")
+                )
+                failed_backups.append(backup["metadata"]["name"])
 
-    return recent_failures
-
-
-def trigger_backups_from_schedules(schedules_list) -> list:
-    """Trigger backups from given schedules
-
-    :param failed_backup_schedules: List of schdules
-    :type failed_backup_schedules: list
-
-    :return: List of newly created backups from schedule
-    :rtype: list
-    """
-    new_backups: List[str] = []
-    for schedule in schedules_list:
-        output = execute(f"velero backup create --from-schedule {schedule}")
-        logger.debug(output.replace("\n", ""))
-
-        new_bkp = re.findall(r"Backup request \"(.*?)\"", output)[0]
-        new_backups.append(new_bkp)
-        logger.info(f"New backup '{new_bkp}' from '{schedule}' schedule created")
-
-    return new_backups
-
-
-def delete_backups(backups) -> None:
-    """Delete Velero backup with velero cli
-
-    :param backups: List of backups
-    :type backups: list
-    :param k8s: Kubernetes client object
-    :type k8s: kubernetes.client.api.custom_objects_api.CustomObjectsApi
-
-    :return: None
-    """
-    for backup in backups:
-        logger.info(f"Deleted failed backup '{backup}'")
-        velero_output = execute(f"velero delete backup {backup} --confirm")
-        logger.debug(velero_output.replace("\n", ""))
+    return (failed_backup_schedules, failed_backups)
 
 
 def parse_arguments():
@@ -179,21 +80,6 @@ def parse_arguments():
         default="24",
         help="Time window(Hours) to look for failed backups in past",
     )
-
-    parser.add_argument(
-        "-d",
-        "--dry-run",
-        action="store_true",
-        help="Dry run mode",
-    )
-
-    parser.add_argument(
-        "-e",
-        "--debug",
-        action="store_true",
-        help="Enable debug",
-    )
-
     parser.add_argument(
         "-o",
         "--dont-delete-backups",
@@ -209,30 +95,17 @@ def main():
 
     args = parse_arguments()
 
-    # Verbose
-    logger.remove()
-    logger.add(sys.stderr, level="DEBUG" if args.debug else "INFO")
+    failed_backup_schedules, failed_backups = find_failed_backups(args.time_window)
+    logger.info(f"Found failed velero backups: {len(failed_backups)}")
 
-    k8s = KubernetesAPI()
-    backup_specs = k8s.get_velero_backups()
-
-    schedules = find_failed_backup_schedules(
-        backups_specs=backup_specs, window_hours=args.time_window
-    )
-
-    if not schedules:
-        logger.info(f"No failed backups in last {args.time_window} hours")
-        return
-
-    if args.dry_run:
-        return
-
-    # Trigger new backups from schedules
-    trigger_backups_from_schedules(schedules_list=schedules.keys())
+    for schedule in failed_backup_schedules:
+        output = execute(f"velero backup create --from-schedule {schedule}")
+        logger.info(output.replace("\n", " "))
 
     if not args.dont_delete_backups:
-        # Delete failed backups
-        delete_backups(list(chain.from_iterable(schedules.values())))
+        for backup in failed_backups:
+            velero_output = execute(f"velero delete backup {backup} --confirm")
+            logger.info(velero_output.replace("\n", " "))
 
 
 if __name__ == "__main__":

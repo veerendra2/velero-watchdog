@@ -1,7 +1,7 @@
 FROM python:3.12.3-bookworm
 
 ARG ARCH=amd64
-ARG VERSION=v1.14.0
+ARG VERSION=v1.14.1
 
 WORKDIR /app
 COPY . .
@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     rm -rf velero-${VERSION}-*
 RUN chown -R nobody:nogroup /app
 USER nobody
-ENTRYPOINT ["python", "velero-watchdog.py"]
+ENTRYPOINT ["python", "/app/velero-watchdog.py"]
